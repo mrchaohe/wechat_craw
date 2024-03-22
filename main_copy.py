@@ -1,0 +1,994 @@
+﻿# -*- coding: utf-8 -*-
+import WeChat
+from PyQt5 import QtCore, QtGui, QtWidgets
+from PyQt5.QtGui import QPixmap
+from PyQt5.QtCore import Qt
+import sys
+import os
+import re
+from time import sleep, localtime, time, strftime
+import undetected_chromedriver as uc
+from PyQt5.QtWidgets import QApplication
+from bs4 import BeautifulSoup
+import requests
+import json
+import logging
+
+
+import urllib.parse
+from selenium import webdriver
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+from math import ceil
+import threading
+import inspect
+import ctypes
+import random
+from goto import with_goto
+import configparser
+import pyautogui
+# import pdfkit
+
+log = logging.getLogger(__file__)
+log.setLevel(logging.DEBUG)
+
+# 建立一个filehandler来把日志记录在文件里，级别为debug以上
+fh = logging.FileHandler("log.log")
+fh.setLevel(logging.INFO)
+
+# 建立一个streamhandler来把日志打在CMD窗口上，级别为error以上
+ch = logging.StreamHandler()
+ch.setLevel(logging.DEBUG)
+
+formatter = logging.Formatter("%(asctime)s line:%(lineno)4d %(levelname)6s - %(message)s")
+ch.setFormatter(formatter)
+fh.setFormatter(formatter)
+
+#将相应的handler添加在logger对象中
+log.addHandler(ch)
+log.addHandler(fh)
+#logging.basicConfig(level=logging.DEBUG, filename="./log", datefmt="%Y-%m-%d %H:%M:%S",format="%(asctime)s line:%(lineno)4d %(levelname)6s - %(message)s")
+
+
+'''
+conf.ini
+    [resume]
+    rootpath = ''
+    pagenum = 0
+    linkbuf_cnt = 0
+    download_cnt = 0
+'''
+# 设置 递归调用深度 为 一百万
+sys.setrecursionlimit(1000000)
+
+# https://github.com/wnma3mz/wechat_articles_spider/blob/master/docs/使用的微信公众号接口.md
+# title_buf = []
+# link_buf = []
+pro_continue = 0
+class MyMainWindow(WeChat.Ui_MainWindow):
+    def __init__(self):
+        self.sess = requests.Session()
+        self.headers = {
+            'Host': 'mp.weixin.qq.com',
+            'User-Agent': r'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        }
+        self.browser_path = r'Chrome/chrome.exe'
+        self.driver_path = r'Chrome/chromedriver.exe'
+
+        self.initpath = os.getcwd()
+        self.rootpath = os.getcwd() + r"/spider/"  # 全局变量，存放路径
+        self.time_gap = 5       # 全局变量，每页爬取等待时间
+        self.timeStart = "20180101"  # 全局变量，起始时间
+
+        self.timeEnd = strftime("%Y%m%d")     # 全局变量，结束时间
+        self.thread_list = []
+        self.label_debug_string = ""
+        self.label_debug_cnt = 0
+        self.total_articles = 0  # 当前文章数
+        self.keyWord = ""
+        self.keyword_search_mode = 0
+        self.keyWord_2 = ""
+        self.freq_control = 0
+        self.download_cnt = 0
+        self.linkbuf_cnt = 0
+        self.download_end = 0
+        self.isresume = self.Check_Config()
+        self.url_json_init()
+        self.title_buf = []
+        self.link_buf = []
+        self.wechat_uin = None
+        self.wechat_key = None
+        
+
+    def vari_init(self):
+        # global title_buf, link_buf
+        self.rootpath = os.getcwd() + r"/spider/"  # 全局变量，存放路径
+        self.thread_list = []
+        self.label_debug_string = ""
+        self.label_debug_cnt = 0
+        self.total_articles = 0  # 当前文章数
+        self.keyWord = ""
+        self.keyword_search_mode = 0
+        self.keyWord_2 = ""
+        self.Label_Debug(' ')
+        self.freq_control = 0
+        self.download_cnt = 0
+        self.linkbuf_cnt = 0
+        self.download_end = 0
+        self.title_buf.clear()  # 清除缓存
+        self.link_buf.clear()  # 清除缓存
+        # self.progressBar.setMaximum(100)
+        # self.progressBar.setValue(0)
+
+    def Label_Debug(self, string1):
+        if self.label_debug_cnt == 12:
+            self.label_debug_string = ""
+            self.label_notes.setText(self.label_debug_string)
+            self.label_debug_cnt = 0
+        self.label_debug_string += "\r\n" + string1
+        self.label_notes.setText(self.label_debug_string)
+        self.label_debug_cnt += 1
+
+    def Label_Debug_Clear(self):
+        self.label_debug_string = ""
+        self.label_notes.setText(self.label_debug_string)
+        self.label_notes.clear()
+        self.label_debug_cnt = 0
+
+    def setupUi(self, MainWindow):
+        super(MyMainWindow, self).setupUi(MainWindow)
+        try:
+            if os.path.exists(os.getcwd()+r'/login.json'):
+                
+               
+                log.debug("{}/login.json".format(os.getcwd()))
+                log.debug("{}/spider.txt".format(self.rootpath))
+             
+                with open(os.getcwd()+r'/login.json', 'r', encoding='utf-8') as p:
+                    login_dict = json.load(p)
+                    log.debug("登陆文件读取成功")
+                    self.Label_Debug("登陆文件读取成功")
+                    self.LineEdit_target.setText(login_dict['target'])  # 公众号的英文名称
+                    self.LineEdit_user.setText(login_dict['user'])  # 自己公众号的账号
+                    self.LineEdit_pwd.setText(login_dict['pwd'])  # 自己公众号的密码
+                    self.LineEdit_timegap.setText(str(login_dict['timegap']))  # 每页爬取等待时间"
+                    self.lineEdit_timeEnd.setText(self.timeEnd)  # 结束时间为当前年
+                    self.lineEdit_timeStart.setText("201801")  # 开始时间为2018
+                    QApplication.processEvents()  # 刷新文本操作
+            
+            # image_url = "http://xfxuezhang.cn/web/share/donate/yf.png"
+            # response = requests.get(image_url)
+            # if response.status_code == 200:
+            #     self.label_yf.setAlignment(Qt.AlignCenter)
+            #     pixmap = QPixmap()
+            #     pixmap.loadFromData(response.content)
+            #     # 缩放图片以适应标签的大小
+            #     scaled_pixmap = pixmap.scaled(self.label_yf.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            #     self.label_yf.setPixmap(scaled_pixmap)
+            #     log.debug('image download ok')
+            # else:
+            #     self.label_yf.setText("image url not found.")
+        
+
+        except Exception as e:
+            log.debug(e)
+
+    def Start_Run(self):
+        self.total_articles = 0
+        Process_thread = threading.Thread(target=self.Process, daemon=True)
+        Process_thread.start()
+        self.thread_list.append(Process_thread)
+
+    def Stop_Run(self):
+        try:
+            self.stop_thread(self.thread_list.pop())
+            self.stop_thread(self.thread_list.pop())
+            self.vari_init()  # 变量复位
+            self.Label_Debug("终止成功!")
+            log.debug("终止成功!")
+        except Exception as e:
+            self.Label_Debug("终止失败!")
+            log.debug(e)
+
+    def Start_Run_2(self):
+        try:
+            os.makedirs(self.rootpath)
+        except:
+            pass
+        self.keyword_search_mode = 1
+        self.total_articles = 0
+        Process_thread = threading.Thread(target=self.Process, daemon=True)
+        Process_thread.start()
+        self.thread_list.append(Process_thread)
+
+    def Stop_Run_2(self):
+        try:
+            self.keyword_search_mode = 0
+            self.stop_thread(self.thread_list.pop())
+            self.stop_thread(self.thread_list.pop())
+            self.vari_init()  # 变量复位
+            self.Label_Debug("终止成功!")
+            log.debug("终止成功!")
+        except Exception as e:
+            self.Label_Debug("终止失败!")
+            log.debug(e)
+
+    def Change_IP(self):
+        tar_url = r'https://www.douban.com'
+        http_s = '111.26.9.26:80'
+        if (tar_url.split(':')[0] == 'https'):
+            proxies = {'https': http_s}
+        else:
+            proxies = {'http': http_s}
+        try:
+            # sess = requests.session()
+            html = self.sess.get(tar_url, proxies=proxies, timeout=(30, 60))
+            log.debug("* 代理有效√ *")
+            log.debug(html)
+        except Exception as e:
+            log.debug("* 代理无效× *")
+            log.debug(e)
+        pass
+
+    def Check_Config(self):
+        self.conf = configparser.ConfigParser()
+        self.cfgpath = os.path.join(os.getcwd(), "conf.ini")
+        if os.path.exists(self.cfgpath):
+            log.debug("[Yes] conf.ini")
+            try:
+                self.conf.read(self.cfgpath, encoding="utf8")  # 读ini文件
+            except:
+                self.conf.read(self.cfgpath)  # 读ini文件
+            resume = self.conf.items('resume')
+            # self.rootpath       = resume[0][1]
+            self.pagenum        = int(resume[1][1])
+            self.linkbuf_cnt    = int(resume[2][1])
+            self.download_cnt   = int(resume[3][1])
+            self.total_articles = int(resume[4][1])
+            log.debug("{}{}{}{}{}".format(self.rootpath, self.pagenum, self.linkbuf_cnt, self.download_cnt, self.total_articles))
+            return 1
+        else:
+            log.debug("[NO] conf.ini")
+            f = open(self.cfgpath, 'w', encoding="utf-8")
+            f.close()
+            self.conf.add_section("resume")
+            self.conf.set("resume", "rootpath", os.getcwd())
+            self.conf.set("resume", "pagenum", "0")
+            self.conf.set("resume", "linkbuf_cnt", "0")
+            self.conf.set("resume", "download_cnt", "0")
+            self.conf.set("resume", "total_articles", "0")
+            self.conf.write(open(self.cfgpath, "w"))  # 删除原文件重新写入
+            return 0
+
+    def Process(self):
+        try:
+            username = self.LineEdit_user.text()                                                    # 自己公众号的账号
+            pwd = self.LineEdit_pwd.text()                                                          # 自己公众号的密码
+            query_name = self.LineEdit_target.text()                                                # 公众号的英文名称
+            self.time_gap = self.LineEdit_timegap.text() or 10                                      # 每页爬取等待时间
+            self.time_gap = int(self.time_gap)
+            self.timeStart = self.lineEdit_timeStart.text()                                         # 起始时间
+            self.timeEnd = self.lineEdit_timeEnd.text()                                             # 结束时间
+            self.keyWord = self.lineEdit_keyword.text()                                             # 关键词
+            # uin_key = self.LineEdit_wechat.text().strip()                                           # 微信 uin,key
+            # if uin_key:
+            #     self.wechat_uin = re.search(r'uin=(.*?)&', uin_key).group(1)
+            #     self.wechat_key = re.search(r'key=(.*?)&', uin_key).group(1)
+                        
+            if self.checkBox.isChecked() is True and pwd != "":
+                dicts = {'target': query_name, 'user': username, 'pwd': pwd, 'timegap': self.time_gap}
+                with open(os.getcwd()+r'/login.json', 'w+') as p:
+                    json.dump(dicts, p)
+                    p.close()
+
+            [token, cookies] = self.Login(username, pwd)
+            # self.Add_Cookies(cookies)
+            if self.keyword_search_mode == 1:
+                self.keyWord_2 = self.lineEdit_keyword_2.text()  # 关键词
+                self.KeyWord_Search(token, self.keyWord_2)
+            else:
+                [fakeid, nickname] = self.Get_WeChat_Subscription(token, query_name)
+                if self.isresume == 0:
+                    Index_Cnt = 0
+                    while True:
+                        try:
+                            self.rootpath = os.path.join(os.getcwd(), "spider-%d" % Index_Cnt, nickname) #+ r"/spider-%d/" % Index_Cnt + nickname  # !!!!!!!!!!!!!!
+                            os.makedirs(self.rootpath)
+                            self.conf.set("resume", "rootpath", self.rootpath)
+                            self.conf.write(open(self.cfgpath, "r+", encoding="utf-8"))
+                            break
+                        except:
+                            Index_Cnt = Index_Cnt + 1
+                self.Get_Articles(token, fakeid)
+        except Exception as e:
+            self.Label_Debug("!!![%s]" % str(e))
+            log.debug("!!![%s]" % str(e))
+            if "list" in str(e):
+                self.Label_Debug("请删除cookie.json")
+                log.debug("请删除cookie.json")
+
+    def url_json_write(self, inputdict):
+        with open(self.url_json_path, "w+") as f:
+            f.write(json.dumps(inputdict))
+
+    def url_json_read(self):
+        with open(self.url_json_path, "r+") as f:
+            json_read = json.loads(f.read())
+        return json_read
+
+    def url_json_update(self, source, adddict):
+        source.append(adddict)
+
+    def url_json_init(self):
+        self.url_json_path = os.path.join(os.getcwd(), "url.json")
+        if os.path.exists(self.url_json_path):
+            log.debug("[Yes] url.json")
+            if self.isresume == 0:
+                os.remove(self.url_json_path)
+                self.url_json_write([])
+        else:
+            log.debug("[NO] url.json")
+            self.url_json_write([])
+        self.json_read = self.url_json_read()
+        self.json_read_len = len(self.json_read)
+        log.debug("len(url.json): {}".format( self.json_read_len))
+
+    def url_json_once(self, dict_add):
+        self.url_json_update(self.json_read, dict_add)  # {"Title": 1, "Link": 2, "Img": 3}
+        self.url_json_write(self.json_read)
+        self.json_read = self.url_json_read()
+        # log.debug("url_json_once OK")
+        # log.debug(self.json_read)
+
+    def Login(self, username, pwd):
+        try:
+            if self.freq_control == 1:
+                raise RuntimeError('freq_control=1')
+            log.debug(self.initpath+"\cookie.json")
+            with open(self.initpath+"\cookie.json", 'r+') as fp:
+                cookieToken_dict = json.load(fp)
+                cookies = cookieToken_dict['COOKIES']
+                token = cookieToken_dict['TOKEN']
+                # cookies = cookieToken_dict[0]['COOKIES']
+                # token = cookieToken_dict[0]['TOKEN']
+                log.debug(token)
+                log.debug(cookies)
+
+                if cookies != "" and token != "":
+                    self.Label_Debug("cookie.json读取成功")
+                    log.debug("cookie.json读取成功")
+                # self.Add_Cookies(cookies)
+                try:
+                    html = self.sess.get(r'https://mp.weixin.qq.com/cgi-bin/home?t=home/index&lang=zh_CN&token=%s' % token, timeout=(30, 60), headers={"Cookie":cookies})
+                except Exception as e:
+                    log.debug("无cookie.json或失效 - %s" %e)
+           
+                if "登陆" not in html.text:
+                    self.Label_Debug("cookie有效,无需浏览器登陆")
+                    log.debug("cookie有效,无需浏览器登陆")
+                    return token, cookies
+        except Exception as e:
+            log.debug("无cookie.json或失效 - %s" %e)
+            self.Label_Debug("无cookie.json或失效")
+
+
+        self.Label_Debug("正在打开浏览器,请稍等")
+        log.debug("正在打开浏览器,请稍等")
+        options = Options()
+        # options.add_argument("--headless")
+        options.add_argument("--incognito")
+        options.add_argument("--disable-blink-features")
+        options.add_argument("--disable-blink-features=AutomationControlled")
+        options.add_argument("--no-default-browser-check")
+        options.add_argument("--allow-running-insecure-content")
+        options.add_argument("--ignore-certificate-errors")
+        options.add_argument("--disable-single-click-autofill")
+        options.add_argument("--disable-autofill-keyboard-accessory-view[8]")
+        options.add_argument("--disable-full-form-autofill-ios")
+        import os
+        os.environ['WDM_SSL_VERIFY'] = '0'
+        browser = webdriver.Chrome(options=options, service=Service(ChromeDriverManager().install()))
+        # browser = uc.Chrome(driver_executable_path=self.driver_path,
+        #                    browser_executable_path=self.browser_path,
+        #                    suppress_welcome=False)
+
+        browser.maximize_window()
+
+        browser.get(r'https://mp.weixin.qq.com')
+        browser.implicitly_wait(60)
+        # account = browser.find_element(by=By.NAME, value="account")
+        # password = browser.find_element(by=By.NAME, value="password")
+        # if (username != "" and pwd != ""):
+        #     account.click()
+        #     account.send_keys(username)
+        #     password.click()
+        #     password.send_keys(pwd)
+        #     browser.find_element(by=By.XPATH, value=r'//*[@id="header"]/div[2]/div/div/form/div[4]/a').click()
+        # else:
+        #     self.Label_Debug("* 请在10分钟内手动完成登录 *")
+        pyautogui.alert(title='请手动完成登录', text='完成登录后，点击确认!', button='确认')
+        WebDriverWait(browser, 60 * 10, 0.5).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, r'.weui-desktop-account__nickname'))
+        )
+        self.Label_Debug("登陆成功")
+        token = re.search(r'token=(.*)', browser.current_url).group(1)
+        cookies = browser.get_cookies()
+        with open(os.getcwd()+"/cookie.json", 'w+') as fp:
+            temp_list = {}
+            temp_array = []
+            temp_list['COOKIES'] = cookies
+            temp_list['TOKEN'] = token
+            temp_array.append(temp_list)
+            json.dump(temp_array, fp)
+            fp.close()
+            self.Label_Debug(">> 本地保存cookie和token")
+            log.debug(">> 本地保存cookie和token")
+        browser.close()
+        return token, cookies
+
+    # def Add_Cookies(self, cookie):
+    #     c = requests.cookies.RequestsCookieJar()
+    #     for i in cookie:  # 添加cookie到CookieJar
+    #         c.set(i["name"], i["value"])
+    #         self.sess.cookies.update(c)  # 更新session里的cookie
+
+    def Add_Cookies(self, cookie):
+        c = requests.cookies.RequestsCookieJar()
+        ck = map(lambda x:x.split("=",1), cookie.split(";"))
+        ck1 = {i:j for i,j in ck}
+        # for i in ck:  # 添加cookie到CookieJar
+        #     try:
+        #         n,  v = i.split("=", 1)
+        #     except Exception as e:
+        #         log.debug(e)
+        #     c.set(n, v)
+        #     self.sess.cookies.update(c)  # 更新session里的cookie
+        # coo2 = requests.
+    def KeyWord_Search(self, token, keyword):
+        self.url_buf = []
+        self.title_buf = []
+        header = {
+            'Content - Type': r'application/x-www-form-urlencoded;charset=UTF-8',
+            'Host': 'mp.weixin.qq.com',
+            'User-Agent': r'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome',
+            'Referer': 'https://mp.weixin.qq.com/cgi-bin/appmsg?t=media/appmsg_edit&action=edit&type=10&isMul=1&isNew=1&share=1&lang=zh_CN&token=%d' % int(token)
+        }
+        url = r'https://mp.weixin.qq.com/cgi-bin/operate_appmsg?sub=check_appmsg_copyright_stat'
+        data = {'token': token, 'lang': 'zh_CN', 'f': 'json', 'ajax': 1, 'random': random.uniform(0, 1), 'url': keyword, 'allow_reprint': 0, 'begin': 0, 'count': 10}
+        html_json = self.sess.post(url, data=data, headers=header).json()
+        total = html_json['total']
+        total_page = ceil(total / 10)
+        log.debug("{} - {}".format(total_page,  total))
+        table_index = 0
+        for i in range(total_page):
+            data = {
+                'token': token,
+                'lang': 'zh_CN',
+                'f': 'json',
+                'ajax': 1,
+                'random': random.uniform(0, 1),
+                'url': keyword,
+                'allow_reprint': 0,
+                'begin': i*10,
+                'count': 10
+            }
+            html_json = self.sess.post(url, data=data, headers=header).json()
+            page_len = len(html_json['list'])
+            # print(page_len)
+            for j in range(page_len):
+                self.url_buf.append(html_json['list'][j]['url'])
+                self.title_buf.append(html_json['list'][j]['title'])
+                print(j+1, ' - ', html_json['list'][j]['title'])
+                table_count = self.tableWidget_result.rowCount()
+                if (table_index >= table_count):
+                    self.tableWidget_result.insertRow(table_count)
+                self.tableWidget_result.setItem(table_index, 0, QtWidgets.QTableWidgetItem(self.title_buf[j]))  # i*20+j
+                self.tableWidget_result.setItem(table_index, 1, QtWidgets.QTableWidgetItem(self.url_buf[j]))  # i*20+j
+                table_index = table_index + 1
+                self.total_articles += 1
+                with open(self.rootpath + "/spider.txt", 'a+', encoding="utf-8") as fp:
+                    fp.write('*' * 60 + '\n【%d】\n  Title: ' % self.total_articles + self.title_buf[j] + '\n  Link: ' + self.url_buf[j] + '\n  Img: ' + '\r\n\r\n')
+                    # fp.write('\n【%d】\n' % self.total_articles + '\n' + url_buf[j] + '\r\n')
+                    fp.close()
+                    self.Label_Debug(">> 第%d条写入完成：%s" % (j + 1, self.title_buf[j]))
+                    print(">> 第%d条写入完成：%s" % (j + 1, self.title_buf[j]))
+            print('*' * 60)
+            self.get_content(self.title_buf, self.url_buf)
+            self.url_buf.clear()
+            self.title_buf.clear()
+
+    def Get_WeChat_Subscription(self, token, query):
+        # 获取公众号对应的信息。查询会匹配多个，返回第一个
+        if (query == ""):
+            query = "xinhuashefabu1"
+        url = r'https://mp.weixin.qq.com/cgi-bin/searchbiz?action=search_biz&token={0}&lang=zh_CN&f=json&ajax=1&random=0.5182749224035845&query={1}&begin=0&count=5'.format(
+            token, query)
+        html_json = self.sess.get(url, headers=self.headers, timeout=(30, 60)).json()
+        fakeid = html_json['list'][0]['fakeid']
+        nickname = html_json['list'][0]['nickname']
+        self.Label_Debug("nickname: "+nickname)
+        return fakeid, nickname
+
+    def Get_Articles(self, token, fakeid):
+        # title_buf = []
+        # link_buf = []
+        img_buf = []
+
+        Total_buf = []
+        url = r'https://mp.weixin.qq.com/cgi-bin/appmsg?token={0}&lang=zh_CN&f=json&ajax=1&random={1}&action=list_ex&begin=0&count=5&query=&fakeid={2}&type=9'.format(token,  random.uniform(0, 1), fakeid)
+        html_json = self.sess.get(url, headers=self.headers, timeout=(30, 60)).json()
+        try:
+            Total_Page = ceil(int(html_json['app_msg_cnt']) / 5)
+            # self.progressBar.setMaximum(Total_Page)
+            QApplication.processEvents()  # 刷新文本操作
+        except Exception as e:
+            print(e)
+            self.Label_Debug("!! 失败信息："+html_json['base_resp']['err_msg'])
+            # if 'freq control' in html_json['base_resp']['err_msg']:
+            #     可能有点问题
+            #     if self.lineEdit_user_2.text() != '' and self.lineEdit_pwd_2.text() != '':
+            #         self.freq_control = 1
+            #         self.Label_Debug("将使用备胎公众号")
+            #         username = self.lineEdit_user_2.text()  # 备选公众号的账号
+            #         pwd = self.lineEdit_pwd_2.text()  # 备选公众号的密码
+            #         [token, cookies] = self.Login(username, pwd)
+            #         self.Add_Cookies(cookies)
+            #         self.freq_control = 0
+            #         self.Get_Articles(token, fakeid)
+            return
+        table_index = 0
+
+        download_thread = threading.Thread(target=self.download_content)
+        download_thread.start()
+        self.thread_list.append(download_thread)
+
+        _buf_index = 0
+        dates = {}
+        for i in range(Total_Page):
+            if self.isresume == 1:
+                i = i + self.pagenum
+            self.Label_Debug("第[%d/%d]页  url:%s, article:%s" % (i + 1, Total_Page, self.linkbuf_cnt, self.download_cnt))
+            log.debug("第[%d/%d]页  url:%s, article:%s" % (i + 1, Total_Page, self.linkbuf_cnt, self.download_cnt))
+            #self.label_total_Page.setText("第[%d/%d]页  linkbuf_cnt:%s, download_cnt:%s" % (i + 1, Total_Page, self.linkbuf_cnt, self.download_cnt))
+            begin = i * 5
+            url = r'https://mp.weixin.qq.com/cgi-bin/appmsg?token={0}&lang=zh_CN&f=json&ajax=1&random={1}&action=list_ex&begin={2}&count=5&query=&fakeid={3}&type=9'.format(
+                token,  random.uniform(0, 1), begin, fakeid)
+            while True:
+                try:
+                    html_json = self.sess.get(url, headers=self.headers, timeout=(30, 60)).json()
+                    break
+                except Exception as e:
+                    log.debug("连接出错，稍等2s %s"% e)
+                    self.Label_Debug("连接出错，稍等2s" + str(e))
+                    sleep(2)
+                    continue
+            try:
+                app_msg_list = html_json['app_msg_list']
+            except Exception as e:
+                self.Label_Debug("！！！操作太频繁，5s后重试！！！")
+                log.debug("！！！操作太频繁，5s后重试！！！ %s"% e)
+                sleep(5)
+                continue
+                # os._exit(0)
+
+            if (str(app_msg_list) == '[]'):
+                log.debug('结束了')
+                self.Label_Debug("结束了")
+                break
+            for j in range(30):
+                try:
+                    if (app_msg_list[j]['title'] in Total_buf):
+                        self.Label_Debug("本条已存在，跳过")
+                        log.debug("本条已存在，跳过")
+                        continue
+                    if self.keyWord != "":
+                        if self.keyWord not in app_msg_list[j]['title']:
+                            self.Label_Debug("本条不匹配关键词[%s]，跳过" % self.keyWord)
+                            log.debug("本条不匹配关键词[%s]，跳过" % self.keyWord)
+                            continue
+                    article_time = strftime("%Y%m%d", localtime(int(app_msg_list[j]['update_time'])))  # 当前文章时间戳转为年月日
+                    # 只取前两条
+                    if dates.get(article_time,0) >1:
+                        continue
+                    dates[article_time] = dates.get(article_time,0) + 1 
+
+                    log.info("文章：%s, 文章日期：%s" %(article_time,app_msg_list[j]['title']))
+                    
+                    if (article_time < self.timeStart ):
+                        self.Label_Debug("本条[%s]不在时间范围[%s-%s]内，跳过" % (article_time, self.timeStart, self.timeEnd))
+                        log.debug("本条[%s]不在时间范围[%s-%s]内，跳过" % (article_time, self.timeStart, self.timeEnd))
+                        self.Stop_Run()
+                        break
+                    if(article_time > self.timeEnd):
+                        self.Label_Debug("本条不在时间范围内，继续")
+                        log.debug("本条不在时间范围内，继续")
+                        # 
+                        continue
+                        # os._exit(0)
+                    self.title_buf.append(app_msg_list[j]['title'])
+                    self.link_buf.append(app_msg_list[j]['link'])
+                    img_buf.append(app_msg_list[j]['cover'])
+                    Total_buf.append(app_msg_list[j]['title'])
+
+                    table_count = self.tableWidget_result.rowCount()
+                    if(table_index >= table_count):
+                        self.tableWidget_result.insertRow(table_count)
+                    self.tableWidget_result.setItem(table_index, 0, QtWidgets.QTableWidgetItem(self.title_buf[_buf_index+j]))  # i*20+j
+                    self.tableWidget_result.setItem(table_index, 1, QtWidgets.QTableWidgetItem(self.link_buf[_buf_index+j]))  # i*20+j
+                    table_index = table_index + 1
+
+                    self.total_articles += 1
+                    dict_in = {"Title": self.title_buf[_buf_index+j], "Link": self.link_buf[_buf_index+j], "Img": img_buf[_buf_index+j]}
+                    self.url_json_once(dict_in)
+                    with open(self.rootpath + "\spider.txt", 'a+', encoding="utf-8") as fp:
+                        fp.write('*' * 60 + '\n【%d】\n  Title: ' % self.total_articles + self.title_buf[_buf_index+j] + '\n  Link: ' + self.link_buf[_buf_index+j] + '\n  Img: ' + img_buf[_buf_index+j] + '\r\n\r\n')
+                        # fp.write('【%d】 ' % self.total_articles + '\n' + link_buf[j] + '\r\n')
+                        fp.close()
+                    self.Label_Debug(">> 第%d条写入完成：%s" % (self.total_articles, self.title_buf[_buf_index+j]))
+                    log.debug(">> 第%d条写入完成：%s" % (self.total_articles, self.title_buf[_buf_index+j]))
+                    self.conf.set("resume", "total_articles", str(self.total_articles))  # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                    self.conf.write(open(self.cfgpath, "r+", encoding="utf-8"))
+                except Exception as e:
+                    log.debug(">> 本页抓取结束 - %s"% e)
+                    _buf_index += j
+                    log.debug("{} {}".format(_buf_index, len(self.title_buf)))
+                    log.debug(self.title_buf)
+                    break
+
+            self.Label_Debug(">> 一页抓取结束")
+            log.debug(">> 一页抓取结束")
+            # self.get_content(title_buf, link_buf)
+            # title_buf.clear()  # 清除缓存
+            # link_buf.clear()  # 清除缓存
+            if self.isresume == 1:
+                self.linkbuf_cnt = len(self.link_buf) + self.json_read_len
+            else:
+                self.linkbuf_cnt = len(self.link_buf)
+            self.conf.set("resume", "linkbuf_cnt", str(self.linkbuf_cnt))  # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            self.conf.write(open(self.cfgpath, "r+", encoding="utf-8"))
+            self.conf.set("resume", "pagenum", str(i))  # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            self.conf.write(open(self.cfgpath, "r+", encoding="utf-8"))
+            sleep(self.time_gap)
+        
+        dates = {}
+        self.Label_Debug_Clear()
+        self.Label_Debug(">> 列表抓取结束!!! <<")
+        log.debug(">> 列表抓取结束!!! <<")
+        self.download_end = 1
+
+
+    def Get_comment_id(self, article_url):
+        '''获取文章id'''
+        try:
+            resp = requests.get(article_url).text
+            pattern = re.compile(r'comment_id\s*=\s*"(?P<id>\d+)"')
+            return pattern.search(resp)['id']
+        except:
+            return None
+
+    def Get_Comments(self, article_url, uin, key, offset=0):
+        '''获取文章的评论'''
+        # TODO: 微信uin和key失效后，弹窗提示更新，更新后继续运行
+        comments = []
+        if not uin or not key:
+            return comments
+        url = 'https://mp.weixin.qq.com/mp/appmsg_comment?'
+        biz = re.search('__biz=(.*?)&', article_url).group(1)
+        comment_id = self.Get_comment_id(article_url)
+        
+        datas = {
+            'action': 'getcomment',
+            # 与文章绑定
+            'comment_id': str(comment_id),   # !import
+            # 与微信绑定
+            'uin': str(uin),                 # !import
+            # 与微信绑定，约20分钟失效
+            'key': str(key),                 # !import
+            '__biz': str(biz),               # !import
+            'offset': str(offset),
+            'limit': '100',
+            'f': 'json',
+            # 'scene': '0',
+            # 'appmsgid': appmsgid,
+            # 'idx': idx,
+            # 'send_time': '',
+            # 'sessionid': sessionid,
+            # 'enterid': enterid,
+            # 'fasttmplajax': '1',
+            # 'pass_ticket': pass_ticket,
+            # 'wxtoken': '',
+            # 'devicetype': 'Windows%2B11%2Bx64',
+            # 'clientversion': '63090551',
+            # 'appmsg_token': '',
+            # 'x5': '0',            
+        }
+        params = ''
+        for key,value in datas.items():
+            params += key + '=' + value + '&'
+        url += params
+        try:
+            resp = requests.get(url=url).json()
+            if resp['elected_comment_total_cnt']:
+                for item in resp['elected_comment']:
+                    comments.append(item['nick_name'] + ": " + item['content'])
+        except:
+            pass
+        return comments
+
+
+    # 获取阅读数和点赞数(未测试)
+    def Get_ReadsLikes(self, link):
+        # 获得mid,_biz,idx,sn 这几个k在lin中的信息
+        mid = link.split("&")[1].split("=")[1]
+        idx = link.split("&")[2].split("=")[1]
+        sn = link.split("&")[3].split("=")[1]
+        _biz = link.split("&")[0].split("_biz=")[1]
+
+        # fillder 中取得一些不变得信息
+        pass_ticket = "这里也是输入你自己的数据"#从fiddler中获取 # ---------------------------------这里每次需要修改---------------------------------
+        appmsg_token = "这里也是输入你自己的数据"#从fiddler中获取 # ---------------------------------这里每次需要修改---------------------------------
+
+        # 目标url
+        url = "http://mp.weixin.qq.com/mp/getappmsgext"#获取详情页的网址
+        # 添加Cookie避免登陆操作，这里的"User-Agent"最好为手机浏览器的标识
+        #phoneCookie = "自己的"
+        phoneCookie = "这里也是输入你自己的数据（这虽然叫phoneCookie但其实就是fillder抓包得到的cookie）"# ---------------------------------这里每次需要修改---------------------------------
+        headers = {
+            "Cookie": phoneCookie,
+            "User-Agent": "这里也是输入你自己的数据" # ---------------------------------这里需要修改---------------------------------
+        }
+        # 添加data，`req_id`、`pass_ticket`分别对应文章的信息，从fiddler复制即可。
+        data = {
+            "is_only_read": "1",
+            "is_temp_url": "0",
+            "appmsg_type": "9",
+            'reward_uin_count': '-1'
+        }
+        """
+        添加请求参数
+        __biz对应公众号的信息，唯一
+        mid、sn、idx分别对应每篇文章的url的信息，需要从url中进行提取
+        key、appmsg_token从fiddler上复制即可
+        pass_ticket对应的文章的信息，也可以直接从fiddler复制
+        """
+        params = {
+            "__biz": _biz,
+            "mid": mid,
+            "sn": sn,
+            "idx": idx,
+            "key": "这里也是输入你自己的数据",# ---------------------------------这里每次需要修改---------------------------------
+            "pass_ticket": pass_ticket,
+            "appmsg_token": appmsg_token,
+            "uin": "这里也是输入你自己的数据",
+            "wxtoken": "777",
+        }
+
+        # 使用post方法进行提交
+        requests.packages.urllib3.disable_warnings()
+        content = requests.post(url, headers=headers, data=data, params=params).json()
+        # 提取其中的阅读数和点赞数
+        # print(content["appmsgstat"]["read_num"], content["appmsgstat"]["like_num"])
+        try:
+            readNum = content["appmsgstat"]["read_num"]
+            print("阅读数:"+str(readNum))
+        except:
+            readNum = 0
+        try:
+            likeNum = content["appmsgstat"]["like_num"]
+            print("喜爱数:"+str(likeNum))
+        except:
+            likeNum = 0
+        try:
+            old_like_num = content["appmsgstat"]["old_like_num"]
+            print("在读数:"+str(old_like_num))
+        except:
+            old_like_num = 0
+        # 歇3s，防止被封
+        time.sleep(3)
+        return readNum, likeNum,old_like_num
+
+
+    def download_content(self):
+        # global link_buf, title_buf
+        # self.pri_index = 0
+        while 1:
+            try:
+                if self.download_cnt < self.linkbuf_cnt:
+                    if self.isresume == 1:
+                        self.json_read = self.url_json_read()
+                        # print("download_cnt:", self.download_cnt, "; json_read:", len(self.json_read), "; linkbuf_cnt:", self.linkbuf_cnt)
+                        self.get_content(self.json_read[self.download_cnt]["Title"], self.json_read[self.download_cnt]["Link"])
+                    else:
+                        self.get_content(self.title_buf[self.download_cnt], self.link_buf[self.download_cnt])                    
+                    self.download_cnt += 1
+                    self.conf.set("resume", "download_cnt", str(self.download_cnt))  # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                    self.conf.write(open(self.cfgpath, "r+", encoding="utf-8"))
+                elif self.download_cnt >= self.linkbuf_cnt and self.download_end == 1:
+                    self.Label_Debug_Clear()
+                    self.Label_Debug(">> 程序结束, 欢迎再用!!! <<")
+                    print(">> 程序结束, 欢迎再用!!! <<")
+                    break
+                elif self.download_cnt == self.linkbuf_cnt and self.download_end == 0:
+                    sleep(2)
+            except Exception as e:
+                print("download_content", e)
+                self.Label_Debug(str(e))
+
+
+    def get_content(self, title_buf, link_buf):  # 获取地址对应的文章内容
+        each_title = ""  # 初始化
+        each_url = ""  # 初始化
+        if self.keyword_search_mode == 1:
+            length = len(title_buf)
+        else:
+            length = 1
+
+        for index in range(length):
+            if self.keyword_search_mode == 1:
+                each_title = re.sub(r'[\|\/\<\>\:\*\?\\\"]', "_", title_buf[index])  # 剔除不合法字符
+            else:
+                each_title = re.sub(r'[\|\/\<\>\:\*\?\\\"]', "_", title_buf)  # 剔除不合法字符
+            filepath = self.rootpath + "/" + each_title  # 为每篇文章创建文件夹
+            if (not os.path.exists(filepath)):  # 若不存在，则创建文件夹
+                os.makedirs(filepath)
+            os.chdir(filepath)  # 切换至文件夹
+
+            download_url = link_buf[index] if self.keyword_search_mode==1 else link_buf                
+            while True:
+                try:
+                    html = self.sess.get(download_url, headers=self.headers, timeout=(30, 60))
+                    break
+                except Exception as e:
+                    print("连接出错，稍等2s", e)
+                    self.Label_Debug("连接出错，稍等2s" + str(e))
+                    sleep(2)
+                    continue
+            # try:
+            #     pdfkit.from_file(html.text, each_title + '.pdf')
+            # except Exception as e:
+            #     pass
+            soup = BeautifulSoup(html.text, 'lxml')
+            try:
+                article = soup.find(class_="rich_media_content").find_all("p")  # 查找文章内容位置
+                No_article = 0
+            except Exception as e:
+                No_article = 1
+                self.Label_Debug("本篇未匹配到文字 ->"+str(e))
+                print("本篇未匹配到文字 ->", e)
+                pass
+            try:
+                img_urls = soup.find(class_="rich_media_content").find_all("img")  # 获得文章图片URL集
+                No_img = 0
+            except Exception as e:
+                No_img = 1
+                self.Label_Debug("本篇未匹配到图片 ->" + str(e))
+                print("本篇未匹配到图片 ->", e)
+                pass
+
+            print("*" * 60)
+            self.Label_Debug("*" * 30)
+            self.Label_Debug(each_title)
+            if No_article != 1:
+                for i in article:
+                    line_content = i.get_text()  # 获取标签内的文本
+                    # print(line_content)
+                    if (line_content != None):  # 文本不为空
+                        with open(each_title + r'.txt', 'a+', encoding='utf-8') as fp:
+                            fp.write(line_content + "\n")  # 写入本地文件
+                            fp.close()
+                self.Label_Debug(">> 保存文档 - 完毕!")
+                # print(">> 标题：", each_title)
+                print(">> 保存文档 - 完毕!")
+            if No_img != 1:
+                for i in range(len(img_urls)):
+                    re_cnt = 0
+                    while True:
+                        try:
+                            pic_down = self.sess.get(img_urls[i]["data-src"], timeout=(30, 60))  # 连接超时30s，读取超时60s，防止卡死
+                            break
+                        except Exception as e:
+                            print("下载超时 ->", e)
+                            self.Label_Debug("下载超时->" + str(e))
+                            re_cnt += 1
+                            if re_cnt > 3:
+                                print("放弃此图")
+                                self.Label_Debug("放弃此图")
+                                break
+                    if re_cnt > 3:
+                        f = open(str(i) + r'.jpeg', 'ab+')
+                        f.close()
+                        continue
+                    img_urls[i]["src"] = str(i)+r'.jpeg'  # 更改图片地址为本地
+                    with open(str(i) + r'.jpeg', 'ab+') as fp:
+                        fp.write(pic_down.content)
+                        fp.close()
+                self.Label_Debug(">> 保存图片%d张 - 完毕!" % len(img_urls))
+                print(">> 保存图片%d张 - 完毕!" % len(img_urls))
+
+            with open(each_title+r'.html', 'w', encoding='utf-8') as f:  # 保存html文件
+                f.write(str(soup))
+                f.close()
+                self.Label_Debug(">> 保存html - 完毕!")
+                # pdfkit.from_file('test.html','out1.pdf')
+                print(">> 保存html - 完毕!")
+            
+            # 下载文章评论
+            # comments = self.Get_Comments(download_url, self.wechat_uin, self.wechat_key)
+            # with open(each_title + r'_comments.txt', 'a+', encoding='utf-8') as fp:
+            #     fp.write('\n'.join(comments))  # 写入本地文件
+            #     fp.close()
+            #     self.Label_Debug(">> 保存评论 - 完毕!")
+        
+            if self.keyword_search_mode == 1:
+                self.Label_Debug(">> 休息 %d s" % self.time_gap)
+                print(">> 休息 %d s" % self.time_gap)
+                sleep(self.time_gap)
+
+################################强制关闭线程##################################################
+    def _async_raise(self, tid, exctype):
+        """raises the exception, performs cleanup if needed"""
+        tid = ctypes.c_long(tid)
+        if not inspect.isclass(exctype):
+            exctype = type(exctype)
+        res = ctypes.pythonapi.PyThreadState_SetAsyncExc(tid, ctypes.py_object(exctype))
+        if res == 0:
+            raise ValueError("invalid thread id")
+        elif res != 1:
+            # """if it returns a number greater than one, you're in trouble,
+            # and you should call it again with exc=NULL to revert the effect"""
+            ctypes.pythonapi.PyThreadState_SetAsyncExc(tid, None)
+            raise SystemError("PyThreadState_SetAsyncExc failed")
+
+    def stop_thread(self, thread):
+        self._async_raise(thread.ident, SystemExit)
+###############################################################################################
+
+def main():
+    app = QtWidgets.QApplication(sys.argv)
+    MainWindow = QtWidgets.QMainWindow()
+    ui = MyMainWindow()
+    ui.setupUi(MainWindow)
+    MainWindow.show()
+    sys.exit(app.exec_())
+
+# def main():
+#     token = "322233966"
+#     cookie = "pac_uid=0_9499e283eb309; iip=0; _qimei_uuid42=18312111b1c10045e0d4e5aa134cdd1c6cbda73345; _qimei_fingerprint=2a1f15d6b072bd79f4cb6d27710642e5; _qimei_q36=; _qimei_h38=fded1232e0d4e5aa134cdd1c02000003718312; ua_id=xEdlAGFn93AJg1zmAAAAAIDH43zlgzHDjN5WstdOHmY=; wxuin=10814036462070; mm_lang=zh_CN; _clck=owm8bv|1|fk8|0; noticeLoginFlag=1; openid2ticket_osd5F6Wum-LXIY6AYVzpprvcBdDw=JDbYed/FSuLXJJ55j00Ucc8/lKzVcLwF88g9QWGSlAg=; bizuin=3927670085; slave_bizuin=3927670085; rand_info=CAESIGtk5l7KjTddL6slh1Im3dQvvvx3wEAxYrQpYOZ/bWV5; data_bizuin=3927670085; data_ticket=B+j0RVQQqMVh8TUfugV2S0tE2vlZEkm8cTQ2DqpywYDRTFKDH/cIH/ZHJbUvOrFh; slave_sid=WXJjcTRqVmhtY3pCdDhyREwybHptVnlrSUNCNEZEYm43UVZvbjZsZ0V5RDVVcVVSVVk4ckttMXRERWRhU2lhMDBKUU9yYnZBZXAzZWhPME85cGRKTnJzT0J3RWFmV3JnWDZhOEp2cGpHRXdBZTh1dzZzYTBTZEVhanZwWjVabFNyTFc4eWZCbjN4cElKdkxu; slave_user=gh_90ebb180ae2a; xid=58854e52eeaf997654763ffb05492b74; openid2ticket_oRX0b6ii8ht_IAZ4EYcd9Zks7MOg=M46R1NB8eBvMYN7ruNxMJSOiMq3w9DKYH5Fx9CbLjiU=; _clsk=1inudwq|1710928126719|4|1|mp.weixin.qq.com/weheat-agent/payload/record"
+#     # c = requests.cookies.RequestsCookieJar()
+#     # ck = map(lambda x:x.split("=",1), cookie.split(";"))
+#     # ck1 = {i:j for i,j in ck}
+#     sess = requests.Session()
+#     try:
+#         html = sess.get(r'https://mp.weixin.qq.com/cgi-bin/home?t=home/index&lang=zh_CN&token=%s' % token, timeout=(30, 60), headers={"Cookie":cookie})
+#         if "登陆" not in html.text:
+#             print("cookie有效,无需浏览器登陆")  
+#             print(html.text)
+#     except Exception as e:
+#         print(e)
+
+
+    
+if __name__ == "__main__":
+    main()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
