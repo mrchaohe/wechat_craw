@@ -23,6 +23,14 @@ engine = create_engine(
 # 数据表的基类（定义表结构用）
 Base = declarative_base()
 
+class MyAccount(Base):
+    """自身公众号"""
+    __tablename__='my_account'
+    id = Column(Integer, primary_key=True, autoincrement=True,comment="公众号id")
+    name = Column(String(32),unique=True,index=True,comment="公众号名称")
+    cookie = Column(String(32),unique=True,index=True,comment="公众号名称")
+    token = Column(String(32),unique=True,index=True,comment="公众号token")
+    isactivate = Column(Integer, default=0, comment="是否作为当前爬取公号,0 不激活 1激活， 默认0")
 
 class Account(Base):
     # 公众号表
@@ -53,13 +61,17 @@ class TaskStatus(Base):
     pid = Column(Integer, ForeignKey('account.id'),comment="公众号id")
     start_time = Column(TIMESTAMP,comment="任务开始时间")
     end_time = Column(TIMESTAMP,comment="任务结束时间")
+    keyword = Column(String(32), default="",comment="查询关键字")
     status = Column(Integer,comment="任务状态0 待运行 1运行中 2 运行完成")
     pagenum = Column(Integer,comment="上次运行页码")
+    timegap = Column(Integer, comment="下载间隔时间")
     link_cnt = Column(Integer,comment="上次记录的文章链接数")
     down_cnt = Column(Integer,comment="上次下载的文章数")
     total  = Column(Integer,comment="上次的文章总数")
     create_time = Column(TIMESTAMP,comment="任务创建时间")
     update_time = Column(TIMESTAMP,comment="任务修改时间")
+    
+
 
 
 # 创建表
